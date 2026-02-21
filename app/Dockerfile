@@ -35,7 +35,8 @@ COPY --from=builder /app/skills ./skills
 COPY --from=builder /app/node_modules/pptxgenjs ./node_modules/pptxgenjs
 COPY --from=builder /app/node_modules/jszip ./node_modules/jszip
 
-# Create data directory for SQLite and uploads
+# Copy pre-existing data (assets, uploads, SQLite DB, presentations)
+COPY --from=builder /app/data ./data
 RUN mkdir -p /app/data/uploads /app/data/presentations
 RUN chown -R nextjs:nodejs /app/data
 
