@@ -56,6 +56,9 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(bytes);
     await writeFile(filePath, buffer);
     
+    // Store just filename in DB (not full path) for portability
+    const dbFilePath = filename;
+    
     // Get image dimensions if it's an image
     let width: number | undefined;
     let height: number | undefined;
@@ -77,7 +80,7 @@ export async function POST(request: NextRequest) {
       name: name || file.name,
       type,
       category,
-      file_path: filePath,
+      file_path: dbFilePath,
       file_size: file.size,
       mime_type: file.type,
       width,

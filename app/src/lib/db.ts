@@ -178,9 +178,10 @@ export const assetDb = {
   delete: (id: string): boolean => {
     const asset = assetDb.getById(id);
     if (asset) {
-      // Delete file
+      // Delete file - resolve path
       try {
-        fs.unlinkSync(asset.file_path);
+        const filePath = path.isAbsolute(asset.file_path) ? asset.file_path : path.join(process.cwd(), 'data', 'uploads', asset.file_path);
+        fs.unlinkSync(filePath);
       } catch (e) {}
     }
     const stmt = db.prepare('DELETE FROM assets WHERE id = ?');

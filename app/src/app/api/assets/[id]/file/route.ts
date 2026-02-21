@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { assetDb } from '@/lib/db';
-import { readFile, stat } from 'fs/promises';
+import { readFile } from 'fs/promises';
+import path from 'path';
 
 // GET /api/assets/[id]/file - Serve asset file
 export async function GET(
@@ -15,8 +16,9 @@ export async function GET(
       return NextResponse.json({ error: 'Asset not found' }, { status: 404 });
     }
     
-    // Read file
-    const fileBuffer = await readFile(asset.file_path);
+    // Resolve file path (DB stores just filename, construct full path)
+    const filePath = path.isAbsolute(asset.file_path) ? asset.file_path : path.join(process.cwd(), 'data', 'uploads', asset.file_path);
+    const fileBuffer = await readFile(filePath);
     
     // Set appropriate headers
     const headers: Record<string, string> = {
