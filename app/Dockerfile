@@ -34,6 +34,18 @@ COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/skills ./skills
 COPY --from=builder /app/node_modules/pptxgenjs ./node_modules/pptxgenjs
 COPY --from=builder /app/node_modules/jszip ./node_modules/jszip
+COPY --from=builder /app/node_modules/setimmediate ./node_modules/setimmediate
+COPY --from=builder /app/node_modules/lie ./node_modules/lie
+COPY --from=builder /app/node_modules/immediate ./node_modules/immediate
+COPY --from=builder /app/node_modules/readable-stream ./node_modules/readable-stream
+COPY --from=builder /app/node_modules/safe-buffer ./node_modules/safe-buffer
+COPY --from=builder /app/node_modules/inherits ./node_modules/inherits
+COPY --from=builder /app/node_modules/string_decoder ./node_modules/string_decoder
+COPY --from=builder /app/node_modules/util-deprecate ./node_modules/util-deprecate
+COPY --from=builder /app/node_modules/core-util-is ./node_modules/core-util-is
+COPY --from=builder /app/node_modules/process-nextick-args ./node_modules/process-nextick-args
+COPY --from=builder /app/node_modules/isarray ./node_modules/isarray
+COPY --from=builder /app/node_modules/pako ./node_modules/pako
 
 # Copy pre-existing data (assets, uploads, SQLite DB, presentations)
 COPY --from=builder /app/data ./data
