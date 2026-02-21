@@ -389,11 +389,6 @@ USE CASES:
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
-      {!apiOk && (
-        <div className="bg-[#FEC00F] text-black px-4 py-2 text-center text-sm font-medium">
-          ANTHROPIC_API_KEY not configured. <a href="https://console.anthropic.com/" target="_blank" className="underline">Get key here</a>
-        </div>
-      )}
 
       {/* Header */}
       <header className="bg-[#212121] border-b border-gray-800">
