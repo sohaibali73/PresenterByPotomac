@@ -61,8 +61,8 @@ You are NOT required to follow the rigid 5-act template structure. Instead:
     // Build asset and chart context
     const assetContext = assetNames?.length > 0 ? `\nASSETS PROVIDED: The user has selected these assets from their library to use in the presentation: ${assetNames.join(', ')}. Reference these assets where appropriate in the slide content.` : '';
     const chartContext = chartsEnabled
-      ? `\nCHARTS: The user has uploaded chart images. ${chartDescription ? `Chart description: "${chartDescription}".` : ''} Include chart slides (layout: "chart") in the presentation to reference these charts. Use the chart description as the chart_caption.`
-      : '\nCHARTS: Do NOT include any chart slides (layout: "chart") — the user has not uploaded chart images.';
+      ? `\nCHARTS: Include chart slides (layout: "chart") in the presentation. ${chartDescription ? `Chart description: "${chartDescription}". Use this as chart_title.` : ''} The chart will be AI-generated with Potomac branding.`
+      : '\nCHARTS: Do NOT include any chart slides (layout: "chart") unless the user specifically requested charts.';
 
     const userMessage = `${modeInstruction}
 ${experimentalInstruction}

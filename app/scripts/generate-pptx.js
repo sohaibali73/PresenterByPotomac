@@ -37,7 +37,8 @@ const W = 13.33, H = 7.5;
 function addLogo(slide, x, y, w, h) {
   x = x || 0.35; y = y || 0.18; w = w || 1.6; h = h || 0.5;
   if (LOGO_PATH && fs.existsSync(LOGO_PATH)) {
-    slide.addImage({ path: LOGO_PATH, x: x, y: y, w: w, h: h, sizing: { type: 'contain', w: w, h: h } });
+    // Use 'contain' sizing to preserve aspect ratio - logo won't stretch
+    slide.addImage({ path: LOGO_PATH, x: x, y: y, w: w, h: h, sizing: { type: 'contain' } });
   } else {
     slide.addText('POTOMAC', { x: x, y: y, w: w, h: h, fontFace: F.HEAD, fontSize: 18, bold: true, color: C.YELLOW, align: 'left', valign: 'middle' });
   }
@@ -170,8 +171,59 @@ function buildChart(pres, d) {
   addBadge(slide, false);
   slide.addText((d.chart_title || d.title || 'CHART').toUpperCase(), { x: 0.4, y: 0.55, w: W - 1.5, h: 0.7, fontFace: F.HEAD, fontSize: 28, bold: true, color: C.DARK });
   slide.addShape('rect', { x: 0.4, y: 1.3, w: 2, h: 0.06, fill: { color: C.YELLOW } });
-  slide.addShape('rect', { x: 0.4, y: 1.5, w: W - 0.8, h: 5.2, fill: { color: C.GRAY20 }, line: { color: C.GRAY } });
-  slide.addText('[ CHART ]', { x: 0.4, y: 1.5, w: W - 0.8, h: 5.2, fontFace: F.HEAD, fontSize: 24, color: C.GRAY, align: 'center', valign: 'middle' });
+  
+  // Check if chart has image data (from AI generator or uploaded)
+  if (d.chart_image) {
+    // Use the provided chart image
+    slide.addImage({ 
+      data: d.chart_image, // base64 data URI
+      x: 0.6, y: 1.5, w: W - 1.2, h: 4.8,
+      sizing: { type: 'contain' }
+    });
+  } else if (d.chart_data && d.chart_type) {
+    // Build native PowerPoint chart with Potomac branding
+    var chartOpts = {
+      x: 0.6, y: 1.5, w: W - 1.2, h: 4.8,
+      chartGrouping: d.chart_grouping || 'clustered',
+      showTitle: false,
+      showLegend: d.show_legend !== false,
+      showValue: d.show_values === true,
+      legendPos: d.legend_position || 'b',
+      chartColors: [C.YELLOW, '3B82F6', '22C55E', 'EF4444', '8B5CF6', 'F97316'],
+      catAxisTitle: d.x_axis_title || '',
+      valAxisTitle: d.y_axis_title || '',
+      catAxisLabelFontSize: 10,
+      valAxisLabelFontSize: 10,
+      catAxisLabelFontFace: F.BODY,
+      valAxisLabelFontFace: F.BODY,
+      catAxisLabelColor: C.GRAY,
+      valAxisLabelColor: C.GRAY,
+      valAxisMinVal: d.y_min || 0,
+      chartAreaLine: { color: C.GRAY20, width: 0.5 },
+      fill: C.WHITE
+    };
+    
+    var chartData = d.chart_data;
+    if (d.chart_type === 'bar') {
+      slide.addChart('bar', chartData, chartOpts);
+    } else if (d.chart_type === 'line') {
+      slide.addChart('line', chartData, Object.assign({}, chartOpts, { lineSmooth: true }));
+    } else if (d.chart_type === 'pie') {
+      slide.addChart('pie', chartData, Object.assign({}, chartOpts, { showLegend: true, showValue: true }));
+    } else if (d.chart_type === 'doughnut') {
+      slide.addChart('doughnut', chartData, Object.assign({}, chartOpts, { showLegend: true, showValue: true, holeSize: 50 }));
+    } else if (d.chart_type === 'area') {
+      slide.addChart('area', chartData, chartOpts);
+    } else {
+      // Default to bar
+      slide.addChart('bar', chartData, chartOpts);
+    }
+  } else {
+    // Placeholder if no chart data
+    slide.addShape('rect', { x: 0.4, y: 1.5, w: W - 0.8, h: 5.2, fill: { color: C.GRAY20 }, line: { color: C.GRAY } });
+    slide.addText('[ CHART ]', { x: 0.4, y: 1.5, w: W - 0.8, h: 5.2, fontFace: F.HEAD, fontSize: 24, color: C.GRAY, align: 'center', valign: 'middle' });
+  }
+  
   if (d.chart_caption) slide.addText(d.chart_caption, { x: 0.4, y: H - 0.45, w: W - 0.8, h: 0.35, fontFace: F.BODY, fontSize: 9, color: C.GRAY, italic: true });
 }
 
@@ -345,6 +397,589 @@ function buildDefinitions(pres, d) {
   slide.addText(defText, { x: 0.4, y: 0.95, w: W - 0.8, h: H - 1.1, fontFace: F.BODY, fontSize: 11, color: C.WHITE, wrap: true, lineSpacingMultiple: 1.3 });
 }
 
+// ═══════════════════════════════════════════════════════════════
+// DIAGRAM BUILDERS - Dynamic Shape Generation
+// ═══════════════════════════════════════════════════════════════
+
+function buildDiagram(pres, d) {
+  var diagramType = d.diagram_type || 'process_flow';
+  
+  switch (diagramType) {
+    case 'process_flow': return buildProcessFlow(pres, d);
+    case 'cycle': return buildCycleDiagram(pres, d);
+    case 'hierarchy': return buildHierarchyDiagram(pres, d);
+    case 'hub_spoke': return buildHubSpokeDiagram(pres, d);
+    case 'comparison': return buildComparisonDiagram(pres, d);
+    case 'funnel': return buildFunnelDiagram(pres, d);
+    case 'timeline': return buildTimelineDiagram(pres, d);
+    default: return buildProcessFlow(pres, d);
+  }
+}
+
+function buildProcessFlow(pres, d) {
+  var slide = pres.addSlide();
+  slide.background = { color: C.DARK };
+  addSectionTag(slide, d.section_tag);
+  addBadge(slide);
+  
+  slide.addText((d.title || 'PROCESS').toUpperCase(), { x: 0.4, y: 0.55, w: W - 1.5, h: 0.65, fontFace: F.HEAD, fontSize: 28, bold: true, color: C.WHITE });
+  if (d.subtitle) {
+    slide.addText(d.subtitle, { x: 0.4, y: 1.2, w: W - 1.5, h: 0.4, fontFace: F.BODY, fontSize: 14, color: C.YELLOW });
+  }
+  
+  var nodes = d.nodes || [];
+  if (nodes.length === 0) return;
+  
+  var boxW = 3.2, boxH = 2.2;
+  var totalW = nodes.length * boxW + (nodes.length - 1) * 0.8;
+  var startX = (W - totalW) / 2;
+  var boxY = 2.5;
+  
+  nodes.forEach(function(node, i) {
+    var x = startX + i * (boxW + 0.8);
+    
+    // Box with border
+    slide.addShape('roundRect', {
+      x: x, y: boxY, w: boxW, h: boxH,
+      rectRadius: 0.1,
+      fill: { color: C.DARK },
+      line: { color: C.YELLOW, width: 2 }
+    });
+    
+    // Node label
+    slide.addText((node.label || '').toUpperCase(), {
+      x: x + 0.1, y: boxY + 0.2, w: boxW - 0.2, h: 0.5,
+      fontFace: F.HEAD, fontSize: 14, bold: true, color: C.YELLOW,
+      align: 'center'
+    });
+    
+    // Node body
+    slide.addText(node.body || '', {
+      x: x + 0.1, y: boxY + 0.75, w: boxW - 0.2, h: boxH - 1,
+      fontFace: F.BODY, fontSize: 12, color: C.WHITE,
+      align: 'center', wrap: true
+    });
+    
+    // Arrow connector
+    if (i < nodes.length - 1) {
+      var arrowX = x + boxW + 0.15;
+      slide.addText('\u2192', {
+        x: arrowX, y: boxY + boxH / 2 - 0.3, w: 0.5, h: 0.6,
+        fontFace: F.HEAD, fontSize: 32, bold: true, color: C.YELLOW,
+        align: 'center', valign: 'middle'
+      });
+    }
+  });
+}
+
+function buildCycleDiagram(pres, d) {
+  var slide = pres.addSlide();
+  slide.background = { color: C.DARK };
+  addSectionTag(slide, d.section_tag);
+  addBadge(slide);
+  
+  slide.addText((d.title || 'CYCLE').toUpperCase(), { x: 0.4, y: 0.55, w: W - 1.5, h: 0.65, fontFace: F.HEAD, fontSize: 28, bold: true, color: C.WHITE });
+  
+  var nodes = d.nodes || [];
+  if (nodes.length < 2) return;
+  
+  var centerX = W / 2, centerY = 4.0;
+  var radius = 2.4;
+  var angleStep = 360 / nodes.length;
+  
+  // Draw connecting arcs/lines first (behind nodes)
+  nodes.forEach(function(node, i) {
+    var angle = (i * angleStep - 90) * Math.PI / 180;
+    var nextAngle = ((i + 1) * angleStep - 90) * Math.PI / 180;
+    
+    var x1 = centerX + radius * Math.cos(angle);
+    var y1 = centerY + radius * Math.sin(angle);
+    var x2 = centerX + radius * Math.cos(nextAngle);
+    var y2 = centerY + radius * Math.sin(nextAngle);
+    
+    // Draw curved arrow (approximated with line)
+    slide.addShape('line', {
+      x: x1, y: y1, w: x2 - x1, h: y2 - y1,
+      line: { color: C.YELLOW, width: 1.5, dashType: 'dash' }
+    });
+  });
+  
+  // Center label
+  if (d.center_label) {
+    slide.addShape('ellipse', {
+      x: centerX - 1.2, y: centerY - 1.2, w: 2.4, h: 2.4,
+      fill: { color: C.DARK },
+      line: { color: C.YELLOW, width: 2 }
+    });
+    slide.addText(d.center_label.toUpperCase(), {
+      x: centerX - 1.2, y: centerY - 0.4, w: 2.4, h: 0.8,
+      fontFace: F.HEAD, fontSize: 12, bold: true, color: C.YELLOW,
+      align: 'center', valign: 'middle'
+    });
+  }
+  
+  // Draw nodes in a circle
+  nodes.forEach(function(node, i) {
+    var angle = (i * angleStep - 90) * Math.PI / 180;
+    var x = centerX + radius * Math.cos(angle) - 1.1;
+    var y = centerY + radius * Math.sin(angle) - 0.7;
+    
+    // Node circle
+    slide.addShape('ellipse', {
+      x: x, y: y, w: 2.2, h: 1.4,
+      fill: { color: C.DARK },
+      line: { color: C.YELLOW, width: 2 }
+    });
+    
+    slide.addText((node.label || '').toUpperCase(), {
+      x: x, y: y + 0.15, w: 2.2, h: 0.4,
+      fontFace: F.HEAD, fontSize: 11, bold: true, color: C.YELLOW,
+      align: 'center'
+    });
+    
+    slide.addText(node.body || '', {
+      x: x + 0.1, y: y + 0.55, w: 2.0, h: 0.75,
+      fontFace: F.BODY, fontSize: 9, color: C.WHITE,
+      align: 'center', wrap: true
+    });
+  });
+}
+
+function buildHierarchyDiagram(pres, d) {
+  var slide = pres.addSlide();
+  slide.background = { color: C.DARK };
+  addSectionTag(slide, d.section_tag);
+  addBadge(slide);
+  
+  slide.addText((d.title || 'HIERARCHY').toUpperCase(), { x: 0.4, y: 0.55, w: W - 1.5, h: 0.65, fontFace: F.HEAD, fontSize: 28, bold: true, color: C.WHITE });
+  
+  var root = d.root || { label: 'ROOT' };
+  var children = d.children || [];
+  
+  // Root node - centered at top
+  var rootW = 4.0, rootH = 1.2;
+  var rootX = (W - rootW) / 2, rootY = 1.5;
+  
+  slide.addShape('roundRect', {
+    x: rootX, y: rootY, w: rootW, h: rootH,
+    rectRadius: 0.1,
+    fill: { color: C.YELLOW }
+  });
+  slide.addText((root.label || '').toUpperCase(), {
+    x: rootX, y: rootY + 0.15, w: rootW, h: 0.45,
+    fontFace: F.HEAD, fontSize: 14, bold: true, color: C.DARK,
+    align: 'center'
+  });
+  slide.addText(root.body || '', {
+    x: rootX + 0.1, y: rootY + 0.6, w: rootW - 0.2, h: 0.5,
+    fontFace: F.BODY, fontSize: 11, color: C.DARK,
+    align: 'center', wrap: true
+  });
+  
+  // Children nodes
+  if (children.length > 0) {
+    var childW = 2.8, childH = 1.1;
+    var gap = 0.3;
+    var totalChildW = children.length * childW + (children.length - 1) * gap;
+    var childStartX = (W - totalChildW) / 2;
+    var childY = 3.2;
+    
+    // Draw connecting lines
+    children.forEach(function(child, i) {
+      var childX = childStartX + i * (childW + gap) + childW / 2;
+      slide.addShape('line', {
+        x: W / 2, y: rootY + rootH,
+        w: childX - W / 2, h: childY - (rootY + rootH),
+        line: { color: C.YELLOW, width: 1.5 }
+      });
+    });
+    
+    children.forEach(function(child, i) {
+      var childX = childStartX + i * (childW + gap);
+      
+      slide.addShape('roundRect', {
+        x: childX, y: childY, w: childW, h: childH,
+        rectRadius: 0.08,
+        fill: { color: C.DARK },
+        line: { color: C.YELLOW, width: 2 }
+      });
+      slide.addText((child.label || '').toUpperCase(), {
+        x: childX, y: childY + 0.1, w: childW, h: 0.35,
+        fontFace: F.HEAD, fontSize: 12, bold: true, color: C.YELLOW,
+        align: 'center'
+      });
+      slide.addText(child.body || '', {
+        x: childX + 0.1, y: childY + 0.5, w: childW - 0.2, h: 0.55,
+        fontFace: F.BODY, fontSize: 10, color: C.WHITE,
+        align: 'center', wrap: true
+      });
+      
+      // Grandchildren
+      if (child.children && child.children.length > 0) {
+        var gcW = 1.8, gcH = 0.9;
+        var gcGap = 0.2;
+        var gcTotalW = child.children.length * gcW + (child.children.length - 1) * gcGap;
+        var gcStartX = childX + (childW - gcTotalW) / 2;
+        var gcY = childY + childH + 0.5;
+        
+        child.children.forEach(function(gc, j) {
+          var gcX = gcStartX + j * (gcW + gcGap);
+          
+          slide.addShape('roundRect', {
+            x: gcX, y: gcY, w: gcW, h: gcH,
+            rectRadius: 0.06,
+            fill: { color: C.DARK },
+            line: { color: C.GRAY, width: 1 }
+          });
+          slide.addText((gc.label || '').toUpperCase(), {
+            x: gcX, y: gcY + 0.08, w: gcW, h: 0.28,
+            fontFace: F.HEAD, fontSize: 9, bold: true, color: C.GRAY20,
+            align: 'center'
+          });
+          slide.addText(gc.body || '', {
+            x: gcX + 0.05, y: gcY + 0.4, w: gcW - 0.1, h: 0.45,
+            fontFace: F.BODY, fontSize: 8, color: C.GRAY,
+            align: 'center', wrap: true
+          });
+        });
+      }
+    });
+  }
+}
+
+function buildHubSpokeDiagram(pres, d) {
+  var slide = pres.addSlide();
+  slide.background = { color: C.DARK };
+  addSectionTag(slide, d.section_tag);
+  addBadge(slide);
+  
+  slide.addText((d.title || 'HUB & SPOKE').toUpperCase(), { x: 0.4, y: 0.55, w: W - 1.5, h: 0.65, fontFace: F.HEAD, fontSize: 28, bold: true, color: C.WHITE });
+  
+  var center = d.center || { label: 'CENTER' };
+  var surrounding = d.surrounding || [];
+  
+  var centerX = W / 2, centerY = 4.0;
+  var radius = 2.6;
+  
+  // Draw spokes (lines from center to surrounding)
+  surrounding.forEach(function(item, i) {
+    var angle = (i * 360 / surrounding.length - 90) * Math.PI / 180;
+    var x = centerX + radius * Math.cos(angle);
+    var y = centerY + radius * Math.sin(angle);
+    
+    slide.addShape('line', {
+      x: centerX, y: centerY,
+      w: x - centerX, h: y - centerY,
+      line: { color: C.YELLOW, width: 1.5, dashType: 'dash' }
+    });
+  });
+  
+  // Center hub
+  slide.addShape('ellipse', {
+    x: centerX - 1.3, y: centerY - 1.3, w: 2.6, h: 2.6,
+    fill: { color: C.YELLOW }
+  });
+  slide.addText((center.label || '').toUpperCase(), {
+    x: centerX - 1.3, y: centerY - 0.5, w: 2.6, h: 0.5,
+    fontFace: F.HEAD, fontSize: 12, bold: true, color: C.DARK,
+    align: 'center'
+  });
+  slide.addText(center.body || '', {
+    x: centerX - 1.2, y: centerY + 0.1, w: 2.4, h: 0.8,
+    fontFace: F.BODY, fontSize: 10, color: C.DARK,
+    align: 'center', wrap: true
+  });
+  
+  // Surrounding nodes
+  surrounding.forEach(function(item, i) {
+    var angle = (i * 360 / surrounding.length - 90) * Math.PI / 180;
+    var x = centerX + radius * Math.cos(angle) - 1.2;
+    var y = centerY + radius * Math.sin(angle) - 0.6;
+    
+    slide.addShape('roundRect', {
+      x: x, y: y, w: 2.4, h: 1.2,
+      rectRadius: 0.08,
+      fill: { color: C.DARK },
+      line: { color: C.YELLOW, width: 2 }
+    });
+    slide.addText((item.label || '').toUpperCase(), {
+      x: x, y: y + 0.1, w: 2.4, h: 0.35,
+      fontFace: F.HEAD, fontSize: 10, bold: true, color: C.YELLOW,
+      align: 'center'
+    });
+    slide.addText(item.body || '', {
+      x: x + 0.1, y: y + 0.5, w: 2.2, h: 0.6,
+      fontFace: F.BODY, fontSize: 9, color: C.WHITE,
+      align: 'center', wrap: true
+    });
+  });
+}
+
+function buildComparisonDiagram(pres, d) {
+  var slide = pres.addSlide();
+  slide.background = { color: C.DARK };
+  addSectionTag(slide, d.section_tag);
+  addBadge(slide);
+  
+  slide.addText((d.title || 'COMPARISON').toUpperCase(), { x: 0.4, y: 0.55, w: W - 1.5, h: 0.65, fontFace: F.HEAD, fontSize: 28, bold: true, color: C.WHITE });
+  
+  var left = d.left_column || { title: 'LEFT', items: [] };
+  var right = d.right_column || { title: 'RIGHT', items: [] };
+  
+  var colW = 5.5, colH = 5.0;
+  var leftX = 0.5, rightX = W - colW - 0.5;
+  var colY = 1.5;
+  
+  // VS divider
+  slide.addText('VS', {
+    x: (W - 1) / 2, y: 3.5, w: 1, h: 0.6,
+    fontFace: F.HEAD, fontSize: 24, bold: true, color: C.YELLOW,
+    align: 'center', valign: 'middle'
+  });
+  
+  // Left column
+  slide.addShape('roundRect', {
+    x: leftX, y: colY, w: colW, h: colH,
+    rectRadius: 0.1,
+    fill: { color: C.DARK },
+    line: { color: C.YELLOW, width: 2 }
+  });
+  slide.addShape('roundRect', {
+    x: leftX + 0.5, y: colY - 0.25, w: colW - 1, h: 0.5,
+    rectRadius: 0.25,
+    fill: { color: C.DARK }
+  });
+  slide.addText((left.title || 'LEFT').toUpperCase(), {
+    x: leftX + 0.5, y: colY - 0.25, w: colW - 1, h: 0.5,
+    fontFace: F.HEAD, fontSize: 14, bold: true, color: C.YELLOW,
+    align: 'center', valign: 'middle'
+  });
+  
+  (left.items || []).forEach(function(item, i) {
+    var itemY = colY + 0.6 + i * 1.3;
+    slide.addText((item.label || '').toUpperCase(), {
+      x: leftX + 0.3, y: itemY, w: colW - 0.6, h: 0.35,
+      fontFace: F.HEAD, fontSize: 12, bold: true, color: C.YELLOW
+    });
+    slide.addText(item.body || '', {
+      x: leftX + 0.3, y: itemY + 0.4, w: colW - 0.6, h: 0.7,
+      fontFace: F.BODY, fontSize: 11, color: C.WHITE, wrap: true
+    });
+  });
+  
+  // Right column
+  slide.addShape('roundRect', {
+    x: rightX, y: colY, w: colW, h: colH,
+    rectRadius: 0.1,
+    fill: { color: C.DARK },
+    line: { color: '4CAF50', width: 2 }
+  });
+  slide.addShape('roundRect', {
+    x: rightX + 0.5, y: colY - 0.25, w: colW - 1, h: 0.5,
+    rectRadius: 0.25,
+    fill: { color: C.DARK }
+  });
+  slide.addText((right.title || 'RIGHT').toUpperCase(), {
+    x: rightX + 0.5, y: colY - 0.25, w: colW - 1, h: 0.5,
+    fontFace: F.HEAD, fontSize: 14, bold: true, color: '4CAF50',
+    align: 'center', valign: 'middle'
+  });
+  
+  (right.items || []).forEach(function(item, i) {
+    var itemY = colY + 0.6 + i * 1.3;
+    slide.addText((item.label || '').toUpperCase(), {
+      x: rightX + 0.3, y: itemY, w: colW - 0.6, h: 0.35,
+      fontFace: F.HEAD, fontSize: 12, bold: true, color: '4CAF50'
+    });
+    slide.addText(item.body || '', {
+      x: rightX + 0.3, y: itemY + 0.4, w: colW - 0.6, h: 0.7,
+      fontFace: F.BODY, fontSize: 11, color: C.WHITE, wrap: true
+    });
+  });
+}
+
+function buildFunnelDiagram(pres, d) {
+  var slide = pres.addSlide();
+  slide.background = { color: C.DARK };
+  addSectionTag(slide, d.section_tag);
+  addBadge(slide);
+  
+  slide.addText((d.title || 'FUNNEL').toUpperCase(), { x: 0.4, y: 0.55, w: W - 1.5, h: 0.65, fontFace: F.HEAD, fontSize: 28, bold: true, color: C.WHITE });
+  
+  var stages = d.stages || [];
+  if (stages.length === 0) return;
+  
+  var startY = 1.6;
+  var stageH = (H - startY - 0.5) / stages.length;
+  var maxWidth = 10;
+  var minWidth = 3;
+  var centerX = W / 2;
+  
+  stages.forEach(function(stage, i) {
+    var widthRatio = stage.width !== undefined ? stage.width : (1 - i * 0.25);
+    var stageW = minWidth + (maxWidth - minWidth) * widthRatio;
+    var stageX = centerX - stageW / 2;
+    var stageY = startY + i * stageH;
+    
+    // Funnel segment (trapezoid-like using rect with varying widths)
+    slide.addShape('roundRect', {
+      x: stageX, y: stageY, w: stageW, h: stageH - 0.15,
+      rectRadius: 0.1,
+      fill: { color: i % 2 === 0 ? C.YELLOW : '333333' },
+      line: { color: C.YELLOW, width: 1 }
+    });
+    
+    slide.addText((stage.label || '').toUpperCase(), {
+      x: stageX, y: stageY + stageH * 0.15, w: stageW, h: 0.4,
+      fontFace: F.HEAD, fontSize: 14, bold: true,
+      color: i % 2 === 0 ? C.DARK : C.YELLOW,
+      align: 'center'
+    });
+    slide.addText(stage.body || '', {
+      x: stageX + 0.2, y: stageY + stageH * 0.4, w: stageW - 0.4, h: stageH * 0.45,
+      fontFace: F.BODY, fontSize: 11,
+      color: i % 2 === 0 ? C.DARK : C.WHITE,
+      align: 'center', wrap: true
+    });
+  });
+}
+
+function buildTimelineDiagram(pres, d) {
+  var slide = pres.addSlide();
+  slide.background = { color: C.DARK };
+  addSectionTag(slide, d.section_tag);
+  addBadge(slide);
+  
+  slide.addText((d.title || 'TIMELINE').toUpperCase(), { x: 0.4, y: 0.55, w: W - 1.5, h: 0.65, fontFace: F.HEAD, fontSize: 28, bold: true, color: C.WHITE });
+  
+  var events = d.events || [];
+  if (events.length === 0) return;
+  
+  // Draw timeline line
+  var lineY = 3.8;
+  slide.addShape('rect', {
+    x: 0.8, y: lineY, w: W - 1.6, h: 0.06,
+    fill: { color: C.YELLOW }
+  });
+  
+  // Draw events
+  var eventSpacing = (W - 1.6) / (events.length + 1);
+  
+  events.forEach(function(event, i) {
+    var x = 0.8 + (i + 1) * eventSpacing;
+    
+    // Marker circle
+    slide.addShape('ellipse', {
+      x: x - 0.25, y: lineY - 0.2, w: 0.5, h: 0.5,
+      fill: { color: C.YELLOW }
+    });
+    
+    // Year above/below line
+    var yearY = i % 2 === 0 ? lineY - 0.9 : lineY + 0.5;
+    slide.addText(event.year || String(i + 1), {
+      x: x - 0.5, y: yearY, w: 1, h: 0.35,
+      fontFace: F.HEAD, fontSize: 14, bold: true, color: C.YELLOW,
+      align: 'center'
+    });
+    
+    // Event box
+    var boxY = i % 2 === 0 ? lineY - 2.4 : lineY + 0.9;
+    slide.addShape('roundRect', {
+      x: x - 1.2, y: boxY, w: 2.4, h: 1.3,
+      rectRadius: 0.08,
+      fill: { color: C.DARK },
+      line: { color: C.YELLOW, width: 1 }
+    });
+    
+    slide.addText((event.label || '').toUpperCase(), {
+      x: x - 1.2, y: boxY + 0.1, w: 2.4, h: 0.4,
+      fontFace: F.HEAD, fontSize: 11, bold: true, color: C.YELLOW,
+      align: 'center'
+    });
+    slide.addText(event.body || '', {
+      x: x - 1.1, y: boxY + 0.55, w: 2.2, h: 0.65,
+      fontFace: F.BODY, fontSize: 9, color: C.WHITE,
+      align: 'center', wrap: true
+    });
+  });
+}
+
+function buildCallout(pres, d) {
+  var slide = pres.addSlide();
+  slide.background = { color: C.DARK };
+  addSectionTag(slide, d.section_tag);
+  addBadge(slide);
+  
+  slide.addText((d.title || 'KEY INSIGHT').toUpperCase(), { x: 0.4, y: 0.55, w: W - 1.5, h: 0.65, fontFace: F.HEAD, fontSize: 28, bold: true, color: C.WHITE });
+  
+  // Big number
+  if (d.big_number) {
+    slide.addText(d.big_number, {
+      x: 1.5, y: 1.8, w: W - 3, h: 2.2,
+      fontFace: F.HEAD, fontSize: 96, bold: true, color: C.YELLOW,
+      align: 'center', valign: 'middle'
+    });
+  }
+  
+  if (d.big_number_label) {
+    slide.addText(d.big_number_label.toUpperCase(), {
+      x: 1.5, y: 4.0, w: W - 3, h: 0.5,
+      fontFace: F.HEAD, fontSize: 20, bold: true, color: C.WHITE,
+      align: 'center'
+    });
+  }
+  
+  if (d.context) {
+    slide.addText(d.context, {
+      x: 1.5, y: 4.5, w: W - 3, h: 0.4,
+      fontFace: F.BODY, fontSize: 14, color: C.GRAY,
+      align: 'center'
+    });
+  }
+  
+  if (d.body) {
+    slide.addText(d.body, {
+      x: 1.5, y: 5.2, w: W - 3, h: 1.5,
+      fontFace: F.BODY, fontSize: 16, color: C.WHITE,
+      align: 'center', wrap: true
+    });
+  }
+}
+
+function buildQuote(pres, d) {
+  var slide = pres.addSlide();
+  slide.background = { color: C.DARK };
+  addSectionTag(slide, d.section_tag);
+  addBadge(slide);
+  
+  if (d.title) {
+    slide.addText(d.title.toUpperCase(), { x: 0.4, y: 0.55, w: W - 1.5, h: 0.5, fontFace: F.HEAD, fontSize: 18, bold: true, color: C.YELLOW });
+  }
+  
+  // Large quote mark
+  slide.addText('"', {
+    x: 1.0, y: 1.2, w: 1.5, h: 1.5,
+    fontFace: 'Georgia', fontSize: 120, color: C.YELLOW,
+    align: 'center', valign: 'top'
+  });
+  
+  // Quote text
+  slide.addText(d.quote || 'Quote goes here.', {
+    x: 1.5, y: 2.2, w: W - 3, h: 2.5,
+    fontFace: F.BODY, fontSize: 28, italic: true, color: C.WHITE,
+    align: 'center', valign: 'middle', wrap: true
+  });
+  
+  // Attribution
+  if (d.attribution) {
+    slide.addText('\u2014 ' + d.attribution, {
+      x: 1.5, y: 4.8, w: W - 3, h: 0.5,
+      fontFace: F.HEAD, fontSize: 16, bold: true, color: C.YELLOW,
+      align: 'center'
+    });
+  }
+}
+
 var BUILDERS = {
   cover: buildCover,
   section_divider: buildSectionDivider,
@@ -358,7 +993,18 @@ var BUILDERS = {
   use_cases: buildUseCases,
   thank_you: buildThankYou,
   disclosures: buildDisclosures,
-  definitions: buildDefinitions
+  definitions: buildDefinitions,
+  // New diagram and creative layouts
+  diagram: buildDiagram,
+  process_flow: buildProcessFlow,
+  cycle: buildCycleDiagram,
+  hierarchy: buildHierarchyDiagram,
+  hub_spoke: buildHubSpokeDiagram,
+  comparison: buildComparisonDiagram,
+  funnel: buildFunnelDiagram,
+  timeline: buildTimelineDiagram,
+  callout: buildCallout,
+  quote: buildQuote
 };
 
 async function main() {

@@ -14,6 +14,19 @@ const db = new Database(dbPath);
 // Enable foreign keys
 db.pragma('journal_mode = WAL');
 
+// Run migrations for existing databases
+try {
+  // Add pptx_base64 column if missing
+  const columns = db.prepare("PRAGMA table_info(presentations)").all() as any[];
+  const hasPptxBase64 = columns.some(c => c.name === 'pptx_base64');
+  if (!hasPptxBase64) {
+    db.exec('ALTER TABLE presentations ADD COLUMN pptx_base64 TEXT');
+    console.log('Added pptx_base64 column to presentations table');
+  }
+} catch (e) {
+  console.log('Migration check skipped (table may not exist yet)');
+}
+
 // Initialize schema
 db.exec(`
   -- Assets table: logos, icons, backgrounds, charts
@@ -65,7 +78,21 @@ db.exec(`
     theme TEXT DEFAULT 'classic',
     file_path TEXT,
     slide_count INTEGER,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    pptx_base64 TEXT, -- Store the generated PPTX
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  -- Presentation versions for undo/redo and history
+  CREATE TABLE IF NOT EXISTS presentation_versions (
+    id TEXT PRIMARY KEY,
+    presentation_id TEXT NOT NULL,
+    version_number INTEGER NOT NULL,
+    outline TEXT NOT NULL, -- JSON snapshot of the outline at this version
+    theme TEXT DEFAULT 'classic',
+    change_description TEXT, -- Optional description of what changed
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (presentation_id) REFERENCES presentations(id) ON DELETE CASCADE
   );
 
   -- Create indexes
@@ -129,6 +156,18 @@ export interface Presentation {
   theme: string;
   file_path?: string;
   slide_count?: number;
+  pptx_base64?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface PresentationVersion {
+  id: string;
+  presentation_id: string;
+  version_number: number;
+  outline: any;
+  theme: string;
+  change_description?: string;
   created_at: string;
 }
 
@@ -257,15 +296,16 @@ export const templateDb = {
 
 // Presentation operations
 export const presentationDb = {
-  create: (pres: Omit<Presentation, 'created_at'>): Presentation => {
+  create: (pres: Omit<Presentation, 'created_at' | 'updated_at'>): Presentation => {
     const stmt = db.prepare(`
-      INSERT INTO presentations (id, title, outline, template_id, theme, file_path, slide_count)
-      VALUES (@id, @title, @outline, @template_id, @theme, @file_path, @slide_count)
+      INSERT INTO presentations (id, title, outline, template_id, theme, file_path, slide_count, pptx_base64)
+      VALUES (@id, @title, @outline, @template_id, @theme, @file_path, @slide_count, @pptx_base64)
     `);
     stmt.run({
       ...pres,
       template_id: pres.template_id || null,
       file_path: pres.file_path || null,
+      pptx_base64: pres.pptx_base64 || null,
       outline: pres.outline ? JSON.stringify(pres.outline) : null
     });
     return presentationDb.getById(pres.id)!;
@@ -287,9 +327,98 @@ export const presentationDb = {
     });
   },
 
+  update: (id: string, data: Partial<Presentation>): Presentation | undefined => {
+    const fields = Object.keys(data).filter(k => k !== 'id');
+    const setClause = fields.map(f => `${f} = @${f}`).join(', ');
+    const stmt = db.prepare(`UPDATE presentations SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id = @id`);
+    const params: any = { id, ...data };
+    if (data.outline) params.outline = JSON.stringify(data.outline);
+    stmt.run(params);
+    return presentationDb.getById(id);
+  },
+
   delete: (id: string): boolean => {
     const stmt = db.prepare('DELETE FROM presentations WHERE id = ?');
     const result = stmt.run(id);
+    return result.changes > 0;
+  }
+};
+
+// Presentation version operations for undo/redo and history
+export const versionDb = {
+  create: (version: Omit<PresentationVersion, 'created_at'>): PresentationVersion => {
+    const stmt = db.prepare(`
+      INSERT INTO presentation_versions (id, presentation_id, version_number, outline, theme, change_description)
+      VALUES (@id, @presentation_id, @version_number, @outline, @theme, @change_description)
+    `);
+    stmt.run({
+      ...version,
+      outline: JSON.stringify(version.outline),
+      change_description: version.change_description || null
+    });
+    return versionDb.getById(version.id)!;
+  },
+
+  getById: (id: string): PresentationVersion | undefined => {
+    const stmt = db.prepare('SELECT * FROM presentation_versions WHERE id = ?');
+    const row = stmt.get(id) as any;
+    if (row?.outline) row.outline = JSON.parse(row.outline);
+    return row;
+  },
+
+  getByPresentationId: (presentationId: string): PresentationVersion[] => {
+    const stmt = db.prepare('SELECT * FROM presentation_versions WHERE presentation_id = ? ORDER BY version_number DESC');
+    const rows = stmt.all(presentationId) as any[];
+    return rows.map(row => {
+      if (row.outline) row.outline = JSON.parse(row.outline);
+      return row;
+    });
+  },
+
+  getLatestVersion: (presentationId: string): PresentationVersion | undefined => {
+    const stmt = db.prepare('SELECT * FROM presentation_versions WHERE presentation_id = ? ORDER BY version_number DESC LIMIT 1');
+    const row = stmt.get(presentationId) as any;
+    if (row?.outline) row.outline = JSON.parse(row.outline);
+    return row;
+  },
+
+  getVersionByNumber: (presentationId: string, versionNumber: number): PresentationVersion | undefined => {
+    const stmt = db.prepare('SELECT * FROM presentation_versions WHERE presentation_id = ? AND version_number = ?');
+    const row = stmt.get(presentationId, versionNumber) as any;
+    if (row?.outline) row.outline = JSON.parse(row.outline);
+    return row;
+  },
+
+  getNextVersionNumber: (presentationId: string): number => {
+    const stmt = db.prepare('SELECT MAX(version_number) as max FROM presentation_versions WHERE presentation_id = ?');
+    const row = stmt.get(presentationId) as any;
+    return (row?.max || 0) + 1;
+  },
+
+  deleteOldVersions: (presentationId: string, keepCount: number = 20): number => {
+    // Get versions to delete (keep only the latest N)
+    const versions = versionDb.getByPresentationId(presentationId);
+    if (versions.length <= keepCount) return 0;
+    
+    const toDelete = versions.slice(keepCount);
+    const stmt = db.prepare('DELETE FROM presentation_versions WHERE id = ?');
+    let deleted = 0;
+    for (const v of toDelete) {
+      stmt.run(v.id);
+      deleted++;
+    }
+    return deleted;
+  },
+
+  delete: (id: string): boolean => {
+    const stmt = db.prepare('DELETE FROM presentation_versions WHERE id = ?');
+    const result = stmt.run(id);
+    return result.changes > 0;
+  },
+
+  deleteByPresentationId: (presentationId: string): boolean => {
+    const stmt = db.prepare('DELETE FROM presentation_versions WHERE presentation_id = ?');
+    const result = stmt.run(presentationId);
     return result.changes > 0;
   }
 };
